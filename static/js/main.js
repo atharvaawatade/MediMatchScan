@@ -13,12 +13,19 @@ document.addEventListener('DOMContentLoaded', function() {
         e.preventDefault();
         const formData = new FormData(form);
         
+        // Show loading indicator
+        resultDiv.innerHTML = '<p>Loading...</p>';
+
         fetch('/chat', {
             method: 'POST',
             body: formData
         })
         .then(response => response.json())
         .then(data => {
+            if (data.error) {
+                resultDiv.textContent = 'Error: ' + data.error;
+                return;
+            }
             ocr_result = data.response;
             diagnosis = data.diagnosis;
             resultDiv.innerHTML = `
@@ -57,8 +64,13 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .then(response => response.json())
         .then(data => {
+            if (data.error) {
+                alert('Error: ' + data.error);
+                return;
+            }
             alert(data.message);
             emailModal.style.display = 'none';
+            emailInput.value = '';  // Clear email input field
         })
         .catch(error => {
             console.error('Error:', error);
