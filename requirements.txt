@@ -3,3 +3,4 @@ pymongo
 Pillow
 requests
 openai
+aiohttp
