@@ -41,9 +41,12 @@ def encode_image(img):
     img.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-def save_to_csv(filename, diagnosis):
-    csv_file = 'output.csv'
-    file_exists = os.path.isfile(csv_file)
+def save_to_csv(data, filename):
+    csv_file = f'/tmp/{filename}'  # Use the /tmp directory
+    with open(csv_file, 'a', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(data)  # Ensure you write the correct data format
+    return csv_file
     
     with open(csv_file, 'a', newline='') as file:
         writer = csv.writer(file)
