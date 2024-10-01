@@ -25,6 +25,7 @@ EMAIL_PASS = os.environ.get('EMAIL_PASS')
 SMTP_HOST = 'smtp.gmail.com'
 SMTP_PORT = 587
 
+
 # MongoDB setup
 mongo_client = MongoClient(MONGODB_URI)
 db = mongo_client['bajaj']
