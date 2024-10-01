@@ -17,7 +17,7 @@ import aiohttp
 import asyncio
 
 # Flask application initialization with template folder specified
-app = Flask(__name__, template_folder="../templates")
+app = Flask(__name__, template_folder="../templates", static_folder="../static")
 
 # Configuration
 MONGODB_URI = os.environ.get('MONGODB_URI')
