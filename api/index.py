@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, send_from_directory
 from pymongo import MongoClient
 from openai import OpenAI
 import os
@@ -15,7 +15,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # Flask application initialization with template folder specified
-app = Flask(__name__, template_folder="../templates")
+app = Flask(__name__, template_folder="../templates", static_folder="../static")
 
 # Configuration
 MONGODB_URI = os.environ.get('MONGODB_URI')
@@ -186,6 +186,11 @@ def send_email_route():
         return jsonify({'success': True, 'message': 'Email sent successfully'})
     else:
         return jsonify({'success': False, 'message': 'Failed to send email'})
+
+# Serve static files (like main.js) from the static directory
+@app.route('/static/<path:filename>')
+def static_files(filename):
+    return send_from_directory(app.static_folder, filename)
 
 if __name__ == '__main__':
     app.run(debug=True)
