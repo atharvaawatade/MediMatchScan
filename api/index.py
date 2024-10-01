@@ -14,7 +14,8 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-app = Flask(__name__)
+# Flask application initialization with template folder specified
+app = Flask(__name__, template_folder="../templates")
 
 # Configuration
 MONGODB_URI = os.environ.get('MONGODB_URI')
@@ -24,7 +25,6 @@ EMAIL_USER = os.environ.get('EMAIL_USER')
 EMAIL_PASS = os.environ.get('EMAIL_PASS')
 SMTP_HOST = 'smtp.gmail.com'
 SMTP_PORT = 587
-
 
 # MongoDB setup
 mongo_client = MongoClient(MONGODB_URI)
