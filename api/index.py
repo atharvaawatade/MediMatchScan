@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, send_from_directory
+from flask import Flask, request, jsonify, render_template
 from pymongo import MongoClient
 from openai import OpenAI
 import os
@@ -13,9 +13,11 @@ import csv
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import aiohttp
+import asyncio
 
 # Flask application initialization with template folder specified
-app = Flask(__name__, template_folder="../templates", static_folder="../static")
+app = Flask(__name__, template_folder="../templates")
 
 # Configuration
 MONGODB_URI = os.environ.get('MONGODB_URI')
@@ -101,7 +103,7 @@ def send_email(to_email, ocr_result, diagnosis):
         print(f"Error sending email: {str(e)}")
         return False
 
-def chat_with_pixtral(base64_img, mrn_number, user_question, filename):
+async def async_chat_with_pixtral(base64_img, mrn_number, user_question, filename):
     api = "https://api.hyperbolic.xyz/v1/chat/completions"
     
     headers = {
@@ -128,19 +130,19 @@ def chat_with_pixtral(base64_img, mrn_number, user_question, filename):
         "top_p": 0.9,
     }
 
-    response = requests.post(api, headers=headers, json=payload)
-
-    if response.status_code == 200:
-        response_data = response.json()
-        if 'choices' in response_data:
-            assistant_response = response_data['choices'][0]['message']['content']
-            provisional_diagnosis = extract_diagnosis_gpt(assistant_response)
-        else:
-            assistant_response = "Response format is incorrect"
-            provisional_diagnosis = "Response format is incorrect"
-    else:
-        assistant_response = f"API request failed: {response.status_code} - {response.text}"
-        provisional_diagnosis = "API request failed"
+    async with aiohttp.ClientSession() as session:
+        async with session.post(api, headers=headers, json=payload) as response:
+            if response.status == 200:
+                response_data = await response.json()
+                if 'choices' in response_data:
+                    assistant_response = response_data['choices'][0]['message']['content']
+                    provisional_diagnosis = extract_diagnosis_gpt(assistant_response)
+                else:
+                    assistant_response = "Response format is incorrect"
+                    provisional_diagnosis = "Response format is incorrect"
+            else:
+                assistant_response = f"API request failed: {response.status} - {response.text}"
+                provisional_diagnosis = "API request failed"
 
     unique_id = str(uuid.uuid4())
 
@@ -172,7 +174,9 @@ def chat():
     img = Image.open(image)
     base64_img = encode_image(img)
 
-    response, diagnosis = chat_with_pixtral(base64_img, mrn_number, user_question, filename)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    response, diagnosis = loop.run_until_complete(async_chat_with_pixtral(base64_img, mrn_number, user_question, filename))
     return jsonify({'response': response, 'diagnosis': diagnosis})
 
 @app.route('/send_email', methods=['POST'])
@@ -186,11 +190,6 @@ def send_email_route():
         return jsonify({'success': True, 'message': 'Email sent successfully'})
     else:
         return jsonify({'success': False, 'message': 'Failed to send email'})
-
-# Serve static files (like main.js) from the static directory
-@app.route('/static/<path:filename>')
-def static_files(filename):
-    return send_from_directory(app.static_folder, filename)
 
 if __name__ == '__main__':
     app.run(debug=True)
