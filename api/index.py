@@ -1,21 +1,23 @@
-from quart import Quart, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template
 from pymongo import MongoClient
 from openai import OpenAI
 import os
 import base64
-import aiohttp
-import asyncio
-import uuid
-import time
-from PIL import Image
+import requests
+import json
 from io import BytesIO
+from PIL import Image
+import time
+import uuid
 import csv
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import aiohttp
+import asyncio
 
-# Quart app initialization
-app = Quart(__name__, template_folder="../templates", static_folder="../static")
+# Flask application initialization with template folder specified
+app = Flask(__name__, template_folder="../templates", static_folder="../static")
 
 # Configuration
 MONGODB_URI = os.environ.get('MONGODB_URI')
@@ -34,23 +36,21 @@ collection = db['client']
 # OpenAI API setup
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Function to encode image to base64
 def encode_image(img):
     buffered = BytesIO()
     img.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-# Save diagnosis to CSV
 def save_to_csv(filename, diagnosis):
     csv_file = '/tmp/diagnoses.csv'
     file_exists = os.path.isfile(csv_file)
+    
     with open(csv_file, 'a', newline='') as file:
         writer = csv.writer(file)
         if not file_exists:
             writer.writerow(['file name', 'Provisional diagnosis'])
         writer.writerow([filename, diagnosis])
 
-# Extract diagnosis using GPT
 def extract_diagnosis_gpt(pixtral_response):
     try:
         completion = client.chat.completions.create(
@@ -59,7 +59,7 @@ def extract_diagnosis_gpt(pixtral_response):
                 {"role": "system", "content": "You are a medical assistant. Extract the provisional diagnosis from the following text. Provide only the diagnosis without any additional text."},
                 {"role": "user", "content": f"Extract the provisional diagnosis from this text: {pixtral_response}"}
             ],
-            timeout=30
+            timeout=30  # Set a timeout for the OpenAI API call
         )
         diagnosis = completion.choices[0].message.content.strip()
         return diagnosis if diagnosis else "No provisional diagnosis found"
@@ -67,8 +67,7 @@ def extract_diagnosis_gpt(pixtral_response):
         print(f"Error in GPT extraction: {str(e)}")
         return "Error in diagnosis extraction"
 
-# Send email function
-async def send_email(to_email, ocr_result, diagnosis):
+def send_email(to_email, ocr_result, diagnosis):
     msg = MIMEMultipart()
     msg['From'] = EMAIL_USER
     msg['To'] = to_email
@@ -90,6 +89,7 @@ async def send_email(to_email, ocr_result, diagnosis):
     Best regards,
     Bima Sarthi Team
     """
+
     msg.attach(MIMEText(body, 'plain'))
 
     try:
@@ -104,20 +104,24 @@ async def send_email(to_email, ocr_result, diagnosis):
         print(f"Error sending email: {str(e)}")
         return False
 
-# Async chat with Pixtral
 async def async_chat_with_pixtral(base64_img, mrn_number, user_question, filename):
     api = "https://api.hyperbolic.xyz/v1/chat/completions"
+    
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {PIXTRAL_API_KEY}",
     }
+
     payload = {
         "messages": [
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": user_question},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}},
+                    {"type": "text", "text": user_question},  
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"},
+                    },
                 ],
             }
         ],
@@ -129,13 +133,17 @@ async def async_chat_with_pixtral(base64_img, mrn_number, user_question, filenam
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(api, headers=headers, json=payload, timeout=60) as response:
+            async with session.post(api, headers=headers, json=payload, timeout=60) as response:  # Increased timeout
                 if response.status == 200:
                     response_data = await response.json()
-                    assistant_response = response_data.get('choices', [{}])[0].get('message', {}).get('content', "No response")
-                    provisional_diagnosis = extract_diagnosis_gpt(assistant_response)
+                    if 'choices' in response_data:
+                        assistant_response = response_data['choices'][0]['message']['content']
+                        provisional_diagnosis = extract_diagnosis_gpt(assistant_response)
+                    else:
+                        assistant_response = "Response format is incorrect"
+                        provisional_diagnosis = "Response format is incorrect"
                 else:
-                    assistant_response = f"API request failed: {response.status}"
+                    assistant_response = f"API request failed: {response.status} - {await response.text()}"
                     provisional_diagnosis = "API request failed"
     except asyncio.TimeoutError:
         assistant_response = "Request timed out"
@@ -145,6 +153,7 @@ async def async_chat_with_pixtral(base64_img, mrn_number, user_question, filenam
         provisional_diagnosis = "Error occurred"
 
     unique_id = str(uuid.uuid4())
+
     document = {
         'mrn_number': mrn_number,
         'ocr_result': assistant_response,
@@ -162,9 +171,12 @@ async def async_chat_with_pixtral(base64_img, mrn_number, user_question, filenam
 
     return assistant_response, provisional_diagnosis
 
-# Route to upload image and get diagnosis
+@app.route('/')
+def index():
+    return render_template('index.html')
+
 @app.route('/chat', methods=['POST'])
-async def chat():
+def chat():
     image = request.files['image']
     mrn_number = request.form['mrn_number']
     user_question = request.form['user_question']
@@ -173,28 +185,23 @@ async def chat():
     img = Image.open(image)
     base64_img = encode_image(img)
 
-    # Asynchronous request to Pixtral API
-    response, diagnosis = await async_chat_with_pixtral(base64_img, mrn_number, user_question, filename)
+    # Use Flask's async_to_sync wrapper for async functions
+    loop = asyncio.new_event_loop()
+    response, diagnosis = loop.run_until_complete(async_chat_with_pixtral(base64_img, mrn_number, user_question, filename))
 
     return jsonify({'response': response, 'diagnosis': diagnosis})
 
-# Send email route
 @app.route('/send_email', methods=['POST'])
-async def send_email_route():
-    data = await request.json
+def send_email_route():
+    data = request.json
     to_email = data.get('email')
     ocr_result = data.get('ocr_result')
     diagnosis = data.get('diagnosis')
 
-    if await send_email(to_email, ocr_result, diagnosis):
+    if send_email(to_email, ocr_result, diagnosis):
         return jsonify({'success': True, 'message': 'Email sent successfully'})
     else:
         return jsonify({'success': False, 'message': 'Failed to send email'})
-
-# Main route for index
-@app.route('/')
-async def index():
-    return await render_template('index.html')
 
 if __name__ == '__main__':
     app.run(debug=True)
