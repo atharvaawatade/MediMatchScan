@@ -3,6 +3,7 @@ from pymongo import MongoClient
 from openai import OpenAI
 import os
 import base64
+import requests
 from io import BytesIO
 from PIL import Image
 import time
@@ -11,8 +12,6 @@ import csv
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import aiohttp
-import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 # Flask application initialization with template folder specified
@@ -171,32 +170,40 @@ def index():
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    image = request.files['image']
-    mrn_number = request.form['mrn_number']
-    user_question = request.form['user_question']
-    filename = image.filename
-
-    img = Image.open(image)
-    base64_img = encode_image(img)
-
     try:
+        image = request.files['image']
+        mrn_number = request.form['mrn_number']
+        user_question = request.form['user_question']
+        filename = image.filename
+
+        img = Image.open(image)
+        base64_img = encode_image(img)
+
         response, diagnosis = chat_with_pixtral(base64_img, mrn_number, user_question, filename)
         return jsonify({'response': response, 'diagnosis': diagnosis})
     except Exception as e:
+        print(f"Error in chat route: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/send_email', methods=['POST'])
 def send_email_route():
-    data = request.json
-    to_email = data.get('email')
-    ocr_result = data.get('ocr_result')
-    diagnosis = data.get('diagnosis')
+    try:
+        data = request.json
+        to_email = data.get('email')
+        ocr_result = data.get('ocr_result')
+        diagnosis = data.get('diagnosis')
 
-    email_sent = send_email(to_email, ocr_result, diagnosis)
-    if email_sent:
-        return jsonify({'success': True, 'message': 'Email sent successfully'})
-    else:
-        return jsonify({'success': False, 'message': 'Failed to send email'})
+        if not all([to_email, ocr_result, diagnosis]):
+            return jsonify({'success': False, 'message': 'Missing required data'}), 400
+
+        email_sent = send_email(to_email, ocr_result, diagnosis)
+        if email_sent:
+            return jsonify({'success': True, 'message': 'Email sent successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to send email'}), 500
+    except Exception as e:
+        print(f"Error in send_email route: {str(e)}")
+        return jsonify({'success': False, 'message': f'An error occurred: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
