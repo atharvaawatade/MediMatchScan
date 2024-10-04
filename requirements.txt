@@ -1,4 +1,4 @@
-quart
+Flask[async]
 pymongo
 Pillow
 requests
