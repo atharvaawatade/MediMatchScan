@@ -3,8 +3,6 @@ from pymongo import MongoClient
 from openai import OpenAI
 import os
 import base64
-import requests
-import json
 from io import BytesIO
 from PIL import Image
 import time
@@ -18,8 +16,9 @@ import asyncio
 import PyPDF2
 import docx
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 
-app = Flask(__name__, template_folder="../templates", static_folder="../static")
+app = Flask(__name__)
 
 # Configuration
 MONGODB_URI = os.environ.get('MONGODB_URI')
@@ -30,13 +29,14 @@ EMAIL_PASS = os.environ.get('EMAIL_PASS')
 SMTP_HOST = 'smtp.gmail.com'
 SMTP_PORT = 587
 
-# MongoDB setup
+# Initialize these outside of any route to avoid cold start issues
 mongo_client = MongoClient(MONGODB_URI)
 db = mongo_client['bajaj']
 collection = db['client']
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-# OpenAI API setup
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Use ThreadPoolExecutor for concurrent operations
+executor = ThreadPoolExecutor(max_workers=5)
 
 def encode_image(img):
     buffered = BytesIO()
@@ -55,13 +55,13 @@ def save_to_csv(filename, diagnosis):
 
 def extract_diagnosis_gpt(pixtral_response):
     try:
-        completion = client.chat.completions.create(
+        completion = openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a medical assistant. Extract the provisional diagnosis from the following text. Provide only the diagnosis without any additional text."},
                 {"role": "user", "content": f"Extract the provisional diagnosis from this text: {pixtral_response}"}
             ],
-            timeout=30
+            timeout=10  # Reduced timeout
         )
         diagnosis = completion.choices[0].message.content.strip()
         return diagnosis if diagnosis else "No provisional diagnosis found"
@@ -145,7 +145,7 @@ async def async_chat_with_pixtral(file_content, mrn_number, user_question, filen
         "Authorization": f"Bearer {PIXTRAL_API_KEY}",
     }
 
-    text_content = extract_text_from_file(file_content)
+    text_content = await asyncio.to_thread(extract_text_from_file, file_content)
     
     if text_content is None:  # It's an image file
         img = Image.open(file_content)
@@ -169,12 +169,12 @@ async def async_chat_with_pixtral(file_content, mrn_number, user_question, filen
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(api, headers=headers, json=payload, timeout=60) as response:
+            async with session.post(api, headers=headers, json=payload, timeout=30) as response:
                 if response.status == 200:
                     response_data = await response.json()
                     if 'choices' in response_data:
                         assistant_response = response_data['choices'][0]['message']['content']
-                        provisional_diagnosis = extract_diagnosis_gpt(assistant_response)
+                        provisional_diagnosis = await asyncio.to_thread(extract_diagnosis_gpt, assistant_response)
                     else:
                         assistant_response = "Response format is incorrect"
                         provisional_diagnosis = "Response format is incorrect"
@@ -200,8 +200,8 @@ async def async_chat_with_pixtral(file_content, mrn_number, user_question, filen
     }
 
     try:
-        collection.insert_one(document)
-        save_to_csv(filename, provisional_diagnosis)
+        await asyncio.to_thread(collection.insert_one, document)
+        await asyncio.to_thread(save_to_csv, filename, provisional_diagnosis)
     except Exception as e:
         print(f"Error saving to database or CSV: {str(e)}")
 
@@ -223,13 +223,15 @@ async def chat():
     return jsonify({'response': response, 'diagnosis': diagnosis})
 
 @app.route('/send_email', methods=['POST'])
-def send_email_route():
+async def send_email_route():
     data = request.json
     to_email = data.get('email')
     ocr_result = data.get('ocr_result')
     diagnosis = data.get('diagnosis')
 
-    if send_email(to_email, ocr_result, diagnosis):
+    success = await asyncio.to_thread(send_email, to_email, ocr_result, diagnosis)
+
+    if success:
         return jsonify({'success': True, 'message': 'Email sent successfully'})
     else:
         return jsonify({'success': False, 'message': 'Failed to send email'})
