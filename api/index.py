@@ -176,20 +176,20 @@ def index():
     return render_template('index.html')
 
 @app.route('/chat', methods=['POST'])
-async def chat():
-    try:
-        image = request.files['image']
-        mrn_number = request.form['mrn_number']
-        user_question = request.form['user_question']
-        filename = image.filename
+def chat():
+    image = request.files['image']
+    mrn_number = request.form['mrn_number']
+    user_question = request.form['user_question']
+    filename = image.filename
 
-        img = Image.open(image)
-        base64_img = encode_image(img)
+    img = Image.open(image)
+    base64_img = encode_image(img)
 
-        response, diagnosis = await async_chat_with_pixtral(base64_img, mrn_number, user_question, filename)
-        return jsonify({'response': response, 'diagnosis': diagnosis})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    # Use Flask's async_to_sync wrapper for async functions
+    loop = asyncio.new_event_loop()
+    response, diagnosis = loop.run_until_complete(async_chat_with_pixtral(base64_img, mrn_number, user_question, filename))
+
+    return jsonify({'response': response, 'diagnosis': diagnosis})
 
 @app.route('/send_email', methods=['POST'])
 def send_email_route():
