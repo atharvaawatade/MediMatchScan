@@ -1,22 +1,23 @@
 from flask import Flask, request, jsonify, render_template
-from flask_apscheduler import APScheduler
 from pymongo import MongoClient
 from openai import OpenAI
 import os
 import base64
 import requests
+import json
 from io import BytesIO
 from PIL import Image
 import time
 import uuid
+import csv
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import aiohttp
+import asyncio
 
+# Flask application initialization with template folder specified
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
-scheduler = APScheduler()
-scheduler.init_app(app)
-scheduler.start()
 
 # Configuration
 MONGODB_URI = os.environ.get('MONGODB_URI')
@@ -31,7 +32,6 @@ SMTP_PORT = 587
 mongo_client = MongoClient(MONGODB_URI)
 db = mongo_client['bajaj']
 collection = db['client']
-tasks_collection = db['tasks']
 
 # OpenAI API setup
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -40,6 +40,19 @@ def encode_image(img):
     buffered = BytesIO()
     img.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+def save_to_csv(data, filename):
+    csv_file = f'/tmp/{filename}'  # Use the /tmp directory
+    with open(csv_file, 'a', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(data)  # Ensure you write the correct data format
+    return csv_file
+    
+    with open(csv_file, 'a', newline='') as file:
+        writer = csv.writer(file)
+        if not file_exists:
+            writer.writerow(['file name', 'Provisional diagnosis'])
+        writer.writerow([filename, diagnosis])
 
 def extract_diagnosis_gpt(pixtral_response):
     try:
@@ -93,7 +106,7 @@ def send_email(to_email, ocr_result, diagnosis):
         print(f"Error sending email: {str(e)}")
         return False
 
-def chat_with_pixtral(task_id, base64_img, mrn_number, user_question):
+async def async_chat_with_pixtral(base64_img, mrn_number, user_question, filename):
     api = "https://api.hyperbolic.xyz/v1/chat/completions"
     
     headers = {
@@ -120,45 +133,35 @@ def chat_with_pixtral(task_id, base64_img, mrn_number, user_question):
         "top_p": 0.9,
     }
 
-    try:
-        response = requests.post(api, headers=headers, json=payload, timeout=60)
-        response.raise_for_status()
-        response_data = response.json()
-        if 'choices' in response_data:
-            assistant_response = response_data['choices'][0]['message']['content']
-            provisional_diagnosis = extract_diagnosis_gpt(assistant_response)
-        else:
-            assistant_response = "Response format is incorrect"
-            provisional_diagnosis = "Response format is incorrect"
-    except requests.Timeout:
-        assistant_response = "Request timed out"
-        provisional_diagnosis = "Request timed out"
-    except requests.RequestException as e:
-        assistant_response = f"API request failed: {str(e)}"
-        provisional_diagnosis = "API request failed"
-    except Exception as e:
-        assistant_response = f"An error occurred: {str(e)}"
-        provisional_diagnosis = "Error occurred during processing"
+    async with aiohttp.ClientSession() as session:
+        async with session.post(api, headers=headers, json=payload) as response:
+            if response.status == 200:
+                response_data = await response.json()
+                if 'choices' in response_data:
+                    assistant_response = response_data['choices'][0]['message']['content']
+                    provisional_diagnosis = extract_diagnosis_gpt(assistant_response)
+                else:
+                    assistant_response = "Response format is incorrect"
+                    provisional_diagnosis = "Response format is incorrect"
+            else:
+                assistant_response = f"API request failed: {response.status} - {response.text}"
+                provisional_diagnosis = "API request failed"
+
+    unique_id = str(uuid.uuid4())
 
     document = {
         'mrn_number': mrn_number,
         'ocr_result': assistant_response,
         'provisional_diagnosis': provisional_diagnosis,
-        'unique_id': str(uuid.uuid4()),
+        'unique_id': unique_id,
         'got_mode': "plain texts OCR",
         'timestamp': time.time()
     }
 
-    try:
-        collection.insert_one(document)
-    except Exception as e:
-        print(f"Error inserting into MongoDB: {str(e)}")
+    collection.insert_one(document)
+    save_to_csv(filename, provisional_diagnosis)
 
-    # Update task status
-    tasks_collection.update_one(
-        {'_id': task_id},
-        {'$set': {'status': 'completed', 'result': {'response': assistant_response, 'diagnosis': provisional_diagnosis}}}
-    )
+    return assistant_response, provisional_diagnosis
 
 @app.route('/')
 def index():
@@ -166,65 +169,30 @@ def index():
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    try:
-        image = request.files['image']
-        mrn_number = request.form['mrn_number']
-        user_question = request.form['user_question']
+    image = request.files['image']
+    mrn_number = request.form['mrn_number']
+    user_question = request.form['user_question']
+    filename = image.filename
 
-        img = Image.open(image)
-        base64_img = encode_image(img)
+    img = Image.open(image)
+    base64_img = encode_image(img)
 
-        # Create a new task
-        task_id = str(uuid.uuid4())
-        tasks_collection.insert_one({
-            '_id': task_id,
-            'status': 'pending',
-            'created_at': time.time()
-        })
-
-        # Schedule the background task
-        scheduler.add_job(
-            func=chat_with_pixtral,
-            trigger='date',
-            args=[task_id, base64_img, mrn_number, user_question],
-            id=task_id
-        )
-
-        return jsonify({'task_id': task_id})
-    except Exception as e:
-        print(f"Error in chat route: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/status/<task_id>', methods=['GET'])
-def get_task_status(task_id):
-    task = tasks_collection.find_one({'_id': task_id})
-    if not task:
-        return jsonify({'error': 'Task not found'}), 404
-    
-    if task['status'] == 'completed':
-        return jsonify({'status': 'completed', 'result': task['result']})
-    else:
-        return jsonify({'status': 'pending'})
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    response, diagnosis = loop.run_until_complete(async_chat_with_pixtral(base64_img, mrn_number, user_question, filename))
+    return jsonify({'response': response, 'diagnosis': diagnosis})
 
 @app.route('/send_email', methods=['POST'])
 def send_email_route():
-    try:
-        data = request.json
-        to_email = data.get('email')
-        ocr_result = data.get('ocr_result')
-        diagnosis = data.get('diagnosis')
+    data = request.json
+    to_email = data.get('email')
+    ocr_result = data.get('ocr_result')
+    diagnosis = data.get('diagnosis')
 
-        if not all([to_email, ocr_result, diagnosis]):
-            return jsonify({'success': False, 'message': 'Missing required data'}), 400
-
-        email_sent = send_email(to_email, ocr_result, diagnosis)
-        if email_sent:
-            return jsonify({'success': True, 'message': 'Email sent successfully'})
-        else:
-            return jsonify({'success': False, 'message': 'Failed to send email'}), 500
-    except Exception as e:
-        print(f"Error in send_email route: {str(e)}")
-        return jsonify({'success': False, 'message': f'An error occurred: {str(e)}'}), 500
+    if send_email(to_email, ocr_result, diagnosis):
+        return jsonify({'success': True, 'message': 'Email sent successfully'})
+    else:
+        return jsonify({'success': False, 'message': 'Failed to send email'})
 
 if __name__ == '__main__':
     app.run(debug=True)
