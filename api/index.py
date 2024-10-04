@@ -3,8 +3,6 @@ from pymongo import MongoClient
 from openai import OpenAI
 import os
 import base64
-import requests
-import json
 from io import BytesIO
 from PIL import Image
 import time
@@ -104,7 +102,7 @@ def send_email(to_email, ocr_result, diagnosis):
         print(f"Error sending email: {str(e)}")
         return False
 
-async def async_chat_with_pixtral(base64_img, mrn_number, user_question, filename):
+def chat_with_pixtral(base64_img, mrn_number, user_question, filename):
     api = "https://api.hyperbolic.xyz/v1/chat/completions"
     
     headers = {
@@ -131,26 +129,25 @@ async def async_chat_with_pixtral(base64_img, mrn_number, user_question, filenam
         "top_p": 0.9,
     }
 
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.post(api, headers=headers, json=payload, timeout=30) as response:
-                if response.status == 200:
-                    response_data = await response.json()
-                    if 'choices' in response_data:
-                        assistant_response = response_data['choices'][0]['message']['content']
-                        provisional_diagnosis = await asyncio.to_thread(extract_diagnosis_gpt, assistant_response)
-                    else:
-                        assistant_response = "Response format is incorrect"
-                        provisional_diagnosis = "Response format is incorrect"
-                else:
-                    assistant_response = f"API request failed: {response.status} - {await response.text()}"
-                    provisional_diagnosis = "API request failed"
-        except asyncio.TimeoutError:
-            assistant_response = "Request timed out"
-            provisional_diagnosis = "Request timed out"
-        except Exception as e:
-            assistant_response = f"An error occurred: {str(e)}"
-            provisional_diagnosis = "Error occurred during processing"
+    try:
+        response = requests.post(api, headers=headers, json=payload, timeout=30)
+        if response.status_code == 200:
+            response_data = response.json()
+            if 'choices' in response_data:
+                assistant_response = response_data['choices'][0]['message']['content']
+                provisional_diagnosis = extract_diagnosis_gpt(assistant_response)
+            else:
+                assistant_response = "Response format is incorrect"
+                provisional_diagnosis = "Response format is incorrect"
+        else:
+            assistant_response = f"API request failed: {response.status_code} - {response.text}"
+            provisional_diagnosis = "API request failed"
+    except requests.Timeout:
+        assistant_response = "Request timed out"
+        provisional_diagnosis = "Request timed out"
+    except Exception as e:
+        assistant_response = f"An error occurred: {str(e)}"
+        provisional_diagnosis = "Error occurred during processing"
 
     unique_id = str(uuid.uuid4())
 
@@ -163,8 +160,8 @@ async def async_chat_with_pixtral(base64_img, mrn_number, user_question, filenam
         'timestamp': time.time()
     }
 
-    await asyncio.to_thread(collection.insert_one, document)
-    await asyncio.to_thread(save_to_csv, [filename, provisional_diagnosis])
+    collection.insert_one(document)
+    save_to_csv([filename, provisional_diagnosis])
 
     return assistant_response, provisional_diagnosis
 
@@ -173,32 +170,29 @@ def index():
     return render_template('index.html')
 
 @app.route('/chat', methods=['POST'])
-async def chat():
+def chat():
     image = request.files['image']
     mrn_number = request.form['mrn_number']
     user_question = request.form['user_question']
     filename = image.filename
 
-    img = await asyncio.to_thread(Image.open, image)
-    base64_img = await asyncio.to_thread(encode_image, img)
+    img = Image.open(image)
+    base64_img = encode_image(img)
 
     try:
-        response, diagnosis = await asyncio.wait_for(
-            async_chat_with_pixtral(base64_img, mrn_number, user_question, filename),
-            timeout=25  # Set a timeout for the entire operation
-        )
+        response, diagnosis = chat_with_pixtral(base64_img, mrn_number, user_question, filename)
         return jsonify({'response': response, 'diagnosis': diagnosis})
-    except asyncio.TimeoutError:
-        return jsonify({'error': 'Request timed out. Please try again.'}), 504
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/send_email', methods=['POST'])
-async def send_email_route():
+def send_email_route():
     data = request.json
     to_email = data.get('email')
     ocr_result = data.get('ocr_result')
     diagnosis = data.get('diagnosis')
 
-    email_sent = await asyncio.to_thread(send_email, to_email, ocr_result, diagnosis)
+    email_sent = send_email(to_email, ocr_result, diagnosis)
     if email_sent:
         return jsonify({'success': True, 'message': 'Email sent successfully'})
     else:
