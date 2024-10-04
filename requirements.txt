@@ -4,4 +4,5 @@ Pillow
 requests
 openai
 aiohttp
-requests
+python-dotenv
+gunicorn
