@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, render_template
+from flask_apscheduler import APScheduler
 from pymongo import MongoClient
 from openai import OpenAI
 import os
@@ -12,8 +13,10 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# Flask application initialization with template folder specified
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
+scheduler = APScheduler()
+scheduler.init_app(app)
+scheduler.start()
 
 # Configuration
 MONGODB_URI = os.environ.get('MONGODB_URI')
@@ -28,6 +31,7 @@ SMTP_PORT = 587
 mongo_client = MongoClient(MONGODB_URI)
 db = mongo_client['bajaj']
 collection = db['client']
+tasks_collection = db['tasks']
 
 # OpenAI API setup
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -89,7 +93,7 @@ def send_email(to_email, ocr_result, diagnosis):
         print(f"Error sending email: {str(e)}")
         return False
 
-def chat_with_pixtral(base64_img, mrn_number, user_question):
+def chat_with_pixtral(task_id, base64_img, mrn_number, user_question):
     api = "https://api.hyperbolic.xyz/v1/chat/completions"
     
     headers = {
@@ -117,8 +121,8 @@ def chat_with_pixtral(base64_img, mrn_number, user_question):
     }
 
     try:
-        response = requests.post(api, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()  # Raises a HTTPError if the status is 4xx, 5xx
+        response = requests.post(api, headers=headers, json=payload, timeout=60)
+        response.raise_for_status()
         response_data = response.json()
         if 'choices' in response_data:
             assistant_response = response_data['choices'][0]['message']['content']
@@ -136,13 +140,11 @@ def chat_with_pixtral(base64_img, mrn_number, user_question):
         assistant_response = f"An error occurred: {str(e)}"
         provisional_diagnosis = "Error occurred during processing"
 
-    unique_id = str(uuid.uuid4())
-
     document = {
         'mrn_number': mrn_number,
         'ocr_result': assistant_response,
         'provisional_diagnosis': provisional_diagnosis,
-        'unique_id': unique_id,
+        'unique_id': str(uuid.uuid4()),
         'got_mode': "plain texts OCR",
         'timestamp': time.time()
     }
@@ -152,7 +154,11 @@ def chat_with_pixtral(base64_img, mrn_number, user_question):
     except Exception as e:
         print(f"Error inserting into MongoDB: {str(e)}")
 
-    return assistant_response, provisional_diagnosis
+    # Update task status
+    tasks_collection.update_one(
+        {'_id': task_id},
+        {'$set': {'status': 'completed', 'result': {'response': assistant_response, 'diagnosis': provisional_diagnosis}}}
+    )
 
 @app.route('/')
 def index():
@@ -168,11 +174,37 @@ def chat():
         img = Image.open(image)
         base64_img = encode_image(img)
 
-        response, diagnosis = chat_with_pixtral(base64_img, mrn_number, user_question)
-        return jsonify({'response': response, 'diagnosis': diagnosis})
+        # Create a new task
+        task_id = str(uuid.uuid4())
+        tasks_collection.insert_one({
+            '_id': task_id,
+            'status': 'pending',
+            'created_at': time.time()
+        })
+
+        # Schedule the background task
+        scheduler.add_job(
+            func=chat_with_pixtral,
+            trigger='date',
+            args=[task_id, base64_img, mrn_number, user_question],
+            id=task_id
+        )
+
+        return jsonify({'task_id': task_id})
     except Exception as e:
         print(f"Error in chat route: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/status/<task_id>', methods=['GET'])
+def get_task_status(task_id):
+    task = tasks_collection.find_one({'_id': task_id})
+    if not task:
+        return jsonify({'error': 'Task not found'}), 404
+    
+    if task['status'] == 'completed':
+        return jsonify({'status': 'completed', 'result': task['result']})
+    else:
+        return jsonify({'status': 'pending'})
 
 @app.route('/send_email', methods=['POST'])
 def send_email_route():
