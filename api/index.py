@@ -8,11 +8,9 @@ from io import BytesIO
 from PIL import Image
 import time
 import uuid
-import csv
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from concurrent.futures import ThreadPoolExecutor
 
 # Flask application initialization with template folder specified
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
@@ -34,20 +32,10 @@ collection = db['client']
 # OpenAI API setup
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Thread pool for concurrent operations
-executor = ThreadPoolExecutor(max_workers=5)
-
 def encode_image(img):
     buffered = BytesIO()
     img.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-def save_to_csv(data, filename):
-    csv_file = f'/tmp/{filename}'  # Use the /tmp directory
-    with open(csv_file, 'a', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(data)  # Ensure you write the correct data format
-    return csv_file
 
 def extract_diagnosis_gpt(pixtral_response):
     try:
@@ -101,7 +89,7 @@ def send_email(to_email, ocr_result, diagnosis):
         print(f"Error sending email: {str(e)}")
         return False
 
-def chat_with_pixtral(base64_img, mrn_number, user_question, filename):
+def chat_with_pixtral(base64_img, mrn_number, user_question):
     api = "https://api.hyperbolic.xyz/v1/chat/completions"
     
     headers = {
@@ -130,20 +118,20 @@ def chat_with_pixtral(base64_img, mrn_number, user_question, filename):
 
     try:
         response = requests.post(api, headers=headers, json=payload, timeout=30)
-        if response.status_code == 200:
-            response_data = response.json()
-            if 'choices' in response_data:
-                assistant_response = response_data['choices'][0]['message']['content']
-                provisional_diagnosis = extract_diagnosis_gpt(assistant_response)
-            else:
-                assistant_response = "Response format is incorrect"
-                provisional_diagnosis = "Response format is incorrect"
+        response.raise_for_status()  # Raises a HTTPError if the status is 4xx, 5xx
+        response_data = response.json()
+        if 'choices' in response_data:
+            assistant_response = response_data['choices'][0]['message']['content']
+            provisional_diagnosis = extract_diagnosis_gpt(assistant_response)
         else:
-            assistant_response = f"API request failed: {response.status_code} - {response.text}"
-            provisional_diagnosis = "API request failed"
+            assistant_response = "Response format is incorrect"
+            provisional_diagnosis = "Response format is incorrect"
     except requests.Timeout:
         assistant_response = "Request timed out"
         provisional_diagnosis = "Request timed out"
+    except requests.RequestException as e:
+        assistant_response = f"API request failed: {str(e)}"
+        provisional_diagnosis = "API request failed"
     except Exception as e:
         assistant_response = f"An error occurred: {str(e)}"
         provisional_diagnosis = "Error occurred during processing"
@@ -159,8 +147,10 @@ def chat_with_pixtral(base64_img, mrn_number, user_question, filename):
         'timestamp': time.time()
     }
 
-    collection.insert_one(document)
-    save_to_csv([filename, provisional_diagnosis])
+    try:
+        collection.insert_one(document)
+    except Exception as e:
+        print(f"Error inserting into MongoDB: {str(e)}")
 
     return assistant_response, provisional_diagnosis
 
@@ -174,12 +164,11 @@ def chat():
         image = request.files['image']
         mrn_number = request.form['mrn_number']
         user_question = request.form['user_question']
-        filename = image.filename
 
         img = Image.open(image)
         base64_img = encode_image(img)
 
-        response, diagnosis = chat_with_pixtral(base64_img, mrn_number, user_question, filename)
+        response, diagnosis = chat_with_pixtral(base64_img, mrn_number, user_question)
         return jsonify({'response': response, 'diagnosis': diagnosis})
     except Exception as e:
         print(f"Error in chat route: {str(e)}")
