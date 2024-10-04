@@ -6,7 +6,3 @@ openai
 aiohttp
 python-dotenv
 gunicorn
-PyPDF2
-python-docx
-pandas
-vercel-flask
