@@ -15,6 +15,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import aiohttp
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # Flask application initialization with template folder specified
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
@@ -36,6 +37,9 @@ collection = db['client']
 # OpenAI API setup
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# Thread pool for concurrent operations
+executor = ThreadPoolExecutor(max_workers=5)
+
 def encode_image(img):
     buffered = BytesIO()
     img.save(buffered, format="PNG")
@@ -47,12 +51,6 @@ def save_to_csv(data, filename):
         writer = csv.writer(file)
         writer.writerow(data)  # Ensure you write the correct data format
     return csv_file
-    
-    with open(csv_file, 'a', newline='') as file:
-        writer = csv.writer(file)
-        if not file_exists:
-            writer.writerow(['file name', 'Provisional diagnosis'])
-        writer.writerow([filename, diagnosis])
 
 def extract_diagnosis_gpt(pixtral_response):
     try:
@@ -134,18 +132,25 @@ async def async_chat_with_pixtral(base64_img, mrn_number, user_question, filenam
     }
 
     async with aiohttp.ClientSession() as session:
-        async with session.post(api, headers=headers, json=payload) as response:
-            if response.status == 200:
-                response_data = await response.json()
-                if 'choices' in response_data:
-                    assistant_response = response_data['choices'][0]['message']['content']
-                    provisional_diagnosis = extract_diagnosis_gpt(assistant_response)
+        try:
+            async with session.post(api, headers=headers, json=payload, timeout=30) as response:
+                if response.status == 200:
+                    response_data = await response.json()
+                    if 'choices' in response_data:
+                        assistant_response = response_data['choices'][0]['message']['content']
+                        provisional_diagnosis = await asyncio.to_thread(extract_diagnosis_gpt, assistant_response)
+                    else:
+                        assistant_response = "Response format is incorrect"
+                        provisional_diagnosis = "Response format is incorrect"
                 else:
-                    assistant_response = "Response format is incorrect"
-                    provisional_diagnosis = "Response format is incorrect"
-            else:
-                assistant_response = f"API request failed: {response.status} - {response.text}"
-                provisional_diagnosis = "API request failed"
+                    assistant_response = f"API request failed: {response.status} - {await response.text()}"
+                    provisional_diagnosis = "API request failed"
+        except asyncio.TimeoutError:
+            assistant_response = "Request timed out"
+            provisional_diagnosis = "Request timed out"
+        except Exception as e:
+            assistant_response = f"An error occurred: {str(e)}"
+            provisional_diagnosis = "Error occurred during processing"
 
     unique_id = str(uuid.uuid4())
 
@@ -158,8 +163,8 @@ async def async_chat_with_pixtral(base64_img, mrn_number, user_question, filenam
         'timestamp': time.time()
     }
 
-    collection.insert_one(document)
-    save_to_csv(filename, provisional_diagnosis)
+    await asyncio.to_thread(collection.insert_one, document)
+    await asyncio.to_thread(save_to_csv, [filename, provisional_diagnosis])
 
     return assistant_response, provisional_diagnosis
 
@@ -168,28 +173,33 @@ def index():
     return render_template('index.html')
 
 @app.route('/chat', methods=['POST'])
-def chat():
+async def chat():
     image = request.files['image']
     mrn_number = request.form['mrn_number']
     user_question = request.form['user_question']
     filename = image.filename
 
-    img = Image.open(image)
-    base64_img = encode_image(img)
+    img = await asyncio.to_thread(Image.open, image)
+    base64_img = await asyncio.to_thread(encode_image, img)
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    response, diagnosis = loop.run_until_complete(async_chat_with_pixtral(base64_img, mrn_number, user_question, filename))
-    return jsonify({'response': response, 'diagnosis': diagnosis})
+    try:
+        response, diagnosis = await asyncio.wait_for(
+            async_chat_with_pixtral(base64_img, mrn_number, user_question, filename),
+            timeout=25  # Set a timeout for the entire operation
+        )
+        return jsonify({'response': response, 'diagnosis': diagnosis})
+    except asyncio.TimeoutError:
+        return jsonify({'error': 'Request timed out. Please try again.'}), 504
 
 @app.route('/send_email', methods=['POST'])
-def send_email_route():
+async def send_email_route():
     data = request.json
     to_email = data.get('email')
     ocr_result = data.get('ocr_result')
     diagnosis = data.get('diagnosis')
 
-    if send_email(to_email, ocr_result, diagnosis):
+    email_sent = await asyncio.to_thread(send_email, to_email, ocr_result, diagnosis)
+    if email_sent:
         return jsonify({'success': True, 'message': 'Email sent successfully'})
     else:
         return jsonify({'success': False, 'message': 'Failed to send email'})
