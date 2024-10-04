@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const emailInput = document.getElementById('emailInput');
     const sendEmailBtn = document.getElementById('sendEmailBtn');
     const closeModalBtn = document.getElementById('closeModalBtn');
+
     let ocr_result, diagnosis;
 
     form.addEventListener('submit', function(e) {
@@ -14,6 +15,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Show loading indicator
         resultDiv.innerHTML = '<p>Loading...</p>';
+
         fetch('/chat', {
             method: 'POST',
             body: formData
