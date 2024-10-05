@@ -137,7 +137,7 @@ async def async_chat_with_pixtral(base64_img, mrn_number, user_question, filenam
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(api, headers=headers, json=payload, timeout=60) as response:  # Increased timeout
+            async with session.post(api, headers=headers, json=payload, timeout=90) as response:  # Increased timeout
                 if response.status == 200:
                     response_data = await response.json()
                     if 'choices' in response_data:
@@ -189,8 +189,8 @@ def chat():
     img = Image.open(image)
     base64_img = encode_image(img)
 
-    # Use Flask's async_to_sync wrapper for async functions
     loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     response, diagnosis = loop.run_until_complete(async_chat_with_pixtral(base64_img, mrn_number, user_question, filename))
 
     return jsonify({'response': response, 'diagnosis': diagnosis})
@@ -220,8 +220,8 @@ def test_api():
     img = Image.open(image)
     base64_img = encode_image(img)
     
-    # Use Flask's async_to_sync wrapper for async functions
     loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     ocr_result, diagnosis = loop.run_until_complete(async_chat_with_pixtral(base64_img, '0000', 'Analyze this prescription', image.filename))
     
     response = {
