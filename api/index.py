@@ -199,7 +199,7 @@ def chat():
     asyncio.set_event_loop(loop)
     response, diagnosis = loop.run_until_complete(async_chat_with_pixtral(base64_img, mrn_number, user_question, filename))
 
-    return jsonify({'response': response, 'diagnosis': diagnosis})
+    return jsonify({'ocr_result': response, 'provisional_diagnosis': diagnosis})
 
 @app.route('/send_email', methods=['POST'])
 def send_email_route():
