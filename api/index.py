@@ -11,20 +11,14 @@ import time
 import uuid
 import csv
 import smtplib
-import logging
-import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import aiohttp
 import asyncio
 from dotenv import load_dotenv
 
-
 # Load environment variables
 load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Flask application initialization with template folder specified
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
@@ -219,43 +213,23 @@ def health_check():
 
 @app.route('/test', methods=['POST'])
 def test_api():
-    start_time = time.time()
-    logger.info("Starting /test endpoint execution")
-
-    try:
-        if 'image' not in request.files:
-            logger.warning("No image file provided")
-            return jsonify({'error': 'No image file provided'}), 400
-        
-        image = request.files['image']
-        img = Image.open(image)
-        base64_img = encode_image(img)
-        
-        logger.info("Image processed, calling async_chat_with_pixtral")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        ocr_result, diagnosis = loop.run_until_complete(
-            asyncio.wait_for(
-                async_chat_with_pixtral(base64_img, '0000', 'Analyze this prescription', image.filename),
-                timeout=50  # Set a timeout for the entire operation
-            )
-        )
-        
-        response = {
-            'provisional_diagnosis': diagnosis,
-            'ocr_result': ocr_result
-        }
-        
-        execution_time = time.time() - start_time
-        logger.info(f"Test endpoint executed successfully in {execution_time:.2f} seconds")
-        return jsonify(response)
-
-    except asyncio.TimeoutError:
-        logger.error("Operation timed out")
-        return jsonify({'error': 'Operation timed out'}), 504
-    except Exception as e:
-        logger.error(f"An error occurred: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image file provided'}), 400
+    
+    image = request.files['image']
+    img = Image.open(image)
+    base64_img = encode_image(img)
+    
+    # Use Flask's async_to_sync wrapper for async functions
+    loop = asyncio.new_event_loop()
+    ocr_result, diagnosis = loop.run_until_complete(async_chat_with_pixtral(base64_img, '0000', 'Analyze this prescription', image.filename))
+    
+    response = {
+        'provisional_diagnosis': diagnosis,
+        'ocr_result': ocr_result
+    }
+    
+    return jsonify(response)
 
 if __name__ == '__main__':
     app.run(debug=True)
