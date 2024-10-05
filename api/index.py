@@ -15,6 +15,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import aiohttp
 import asyncio
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Flask application initialization with template folder specified
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
@@ -202,6 +206,30 @@ def send_email_route():
         return jsonify({'success': True, 'message': 'Email sent successfully'})
     else:
         return jsonify({'success': False, 'message': 'Failed to send email'})
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'healthy', 'message': 'Server is running fine'})
+
+@app.route('/test', methods=['POST'])
+def test_api():
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image file provided'}), 400
+    
+    image = request.files['image']
+    img = Image.open(image)
+    base64_img = encode_image(img)
+    
+    # Use Flask's async_to_sync wrapper for async functions
+    loop = asyncio.new_event_loop()
+    ocr_result, diagnosis = loop.run_until_complete(async_chat_with_pixtral(base64_img, '0000', 'Analyze this prescription', image.filename))
+    
+    response = {
+        'provisional_diagnosis': diagnosis,
+        'ocr_result': ocr_result
+    }
+    
+    return jsonify(response)
 
 if __name__ == '__main__':
     app.run(debug=True)
