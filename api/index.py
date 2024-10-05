@@ -201,6 +201,40 @@ def chat():
 
     return jsonify({'response': response, 'diagnosis': diagnosis})
 
+@app.route('/send_email', methods=['POST'])
+def send_email_route():
+    data = request.json
+    to_email = data.get('email')
+    ocr_result = data.get('ocr_result')
+    diagnosis = data.get('diagnosis')
+
+    if send_email(to_email, ocr_result, diagnosis):
+        return jsonify({'success': True, 'message': 'Email sent successfully'})
+    else:
+        return jsonify({'success': False, 'message': 'Failed to send email'})
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'healthy', 'message': 'Server is running fine'})
+
+@app.route('/test', methods=['POST'])
+def test_api():
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image file provided'}), 400
+    
+    image = request.files['image']
+    img = Image.open(image)
+    base64_img = encode_image(img)
+    
+    ocr_result, diagnosis = chat_with_pixtral(base64_img, '0000', 'Analyze this prescription', image.filename)
+    
+    response = {
+        'provisional_diagnosis': diagnosis,
+        'ocr_result': ocr_result
+    }
+    
+    return jsonify(response)
+
 
 if __name__ == '__main__':
     app.run(debug=True)
