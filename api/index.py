@@ -27,8 +27,8 @@ app = Flask(__name__, template_folder="../templates", static_folder="../static")
 MONGODB_URI = os.environ.get('MONGODB_URI')
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 PIXTRAL_API_KEY = os.environ.get('PIXTRAL_API_KEY')
-EMAIL_USER = os.environ.get('EMAIL_USER')
-EMAIL_PASS = os.environ.get('EMAIL_PASS')
+EMAIL_USER = os.environ.get('EMAIL_USER', 'odop662@gmail.com')
+EMAIL_PASS = os.environ.get('EMAIL_PASS', 'zykvuppkoznmpgzn')
 SMTP_HOST = 'smtp.gmail.com'
 SMTP_PORT = 587
 
