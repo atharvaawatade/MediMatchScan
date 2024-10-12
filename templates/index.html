@@ -11,7 +11,7 @@
             margin: 0;
             padding: 0;
             display: flex;
-            height: 100vh;
+            min-height: 100vh;
             color: #fff;
         }
         .sidebar {
@@ -33,10 +33,16 @@
         .main-content {
             flex-grow: 1;
             padding: 20px;
+            display: flex;
         }
         .container {
-            max-width: 800px;
+            max-width: 1200px;
             margin: 0 auto;
+            display: flex;
+            gap: 20px;
+        }
+        .left-column, .right-column {
+            flex: 1;
         }
         .form-group {
             margin-bottom: 15px;
@@ -59,7 +65,6 @@
             border: none;
             cursor: pointer;
         }
-
         .modal {
             display: none;
             position: fixed;
@@ -91,7 +96,6 @@
             text-decoration: none;
             cursor: pointer;
         }
-
         #result {
             margin-top: 20px;
             padding: 10px;
@@ -100,34 +104,17 @@
             background-color: #1e1e1e;
             color: #d4d4d4;
         }
-
         .json-display {
             white-space: pre-wrap;
             font-family: 'Courier New', Courier, monospace;
             font-size: 14px;
             line-height: 1.5;
         }
-
-        .json-key {
-            color: #9cdcfe;
-        }
-
-        .json-string {
-            color: #ce9178;
-        }
-
-        .json-number {
-            color: #b5cea8;
-        }
-
-        .json-boolean {
-            color: #569cd6;
-        }
-
-        .json-null {
-            color: #569cd6;
-        }
-
+        .json-key { color: #9cdcfe; }
+        .json-string { color: #ce9178; }
+        .json-number { color: #b5cea8; }
+        .json-boolean { color: #569cd6; }
+        .json-null { color: #569cd6; }
         .copy-btn {
             margin-top: 10px;
             padding: 5px 10px;
@@ -137,46 +124,102 @@
             border-radius: 3px;
             cursor: pointer;
         }
-
         .copy-btn:hover {
             background-color: #45a049;
+        }
+        .format-toggle {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .slider {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+            background-color: #ccc;
+            border-radius: 34px;
+            margin: 0 10px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            border-radius: 50%;
+            transition: .4s;
+        }
+        input:checked + .slider {
+            background-color: #2196F3;
+        }
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+        .code-editor {
+            width: 100%;
+            height: 300px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            font-family: monospace;
+            white-space: pre-wrap;
         }
     </style>
 </head>
 <body>
-    <div class="sidebar">
-        <a href="http://127.0.0.1:5500/home.html">Home</a>
-        <a href="http://127.0.0.1:5000/" class="active">BimaSarathi</a>
-        <a href="http://127.0.0.1:3000/">MediMatchBot</a>
-    </div>
 
     <div class="main-content">
         <div class="container">
-            <h1>MediMatch Scanner</h1>
-            <p>Add your image, input MRN, and get instant insights.</p>
+            <div class="left-column">
+                <h1>MediMatch Scanner</h1>
+                <p>Add your image, input MRN, and get instant insights.</p>
 
-            <form id="uploadForm" enctype="multipart/form-data">
-                <div class="form-group">
-                    <label for="image">Upload Your Image</label>
-                    <input type="file" id="image" name="image" accept="image/*" required>
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="image">Upload Your Image</label>
+                        <input type="file" id="image" name="image" accept="image/*" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="mrn_number">Enter MRN Number (Optional)</label>
+                        <input type="text" id="mrn_number" name="mrn_number">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="consent">
+                            <input type="checkbox" id="consent" name="consent" required>
+                            I acknowledge and consent to the collection and storage of OCR data associated with my input.
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="user_question">Please enter your question</label>
+                        <input type="text" id="user_question" name="user_question" required>
+                    </div>
+
+                    <button type="submit" class="btn">Submit</button>
+                </form>
+            </div>
+
+            <div class="right-column">
+                <div class="format-toggle">
+                    <span>JSON</span>
+                    <label class="switch">
+                        <input type="checkbox" id="formatToggle">
+                        <span class="slider round"></span>
+                    </label>
+                    <span>TXT</span>
                 </div>
 
-                <div class="form-group">
-                    <label for="mrn_number">Enter MRN Number</label>
-                    <input type="text" id="mrn_number" name="mrn_number" required>
+                <div id="code-editor" class="code-editor"></div>
+
+                <div class="editor-actions">
+                    <button id="copyBtn" class="btn">Copy</button>
+                    <button id="emailBtn" class="btn">E-Mail</button>
                 </div>
-
-                <div class="form-group">
-                    <label for="user_question">Please enter your question</label>
-                    <input type="text" id="user_question" name="user_question" required>
-                </div>
-
-                <button type="submit" class="btn">Submit</button>
-            </form>
-
-            <button id="emailBtn" class="btn" style="display: none;">E-Mail</button>
-
-            <div id="result"></div>
+            </div>
         </div>
     </div>
 
@@ -189,6 +232,102 @@
         </div>
     </div>
 
-    <script src="static/js/main.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const uploadForm = document.getElementById('uploadForm');
+            const codeEditor = document.getElementById('code-editor');
+            const copyBtn = document.getElementById('copyBtn');
+            const emailBtn = document.getElementById('emailBtn');
+            const emailModal = document.getElementById('emailModal');
+            const closeModalBtn = document.getElementById('closeModalBtn');
+            const sendEmailBtn = document.getElementById('sendEmailBtn');
+            const formatToggle = document.getElementById('formatToggle');
+
+            uploadForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const formData = new FormData(this);
+
+                fetch('/process', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    displayResult(data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+            });
+
+            function displayResult(data) {
+                let content = JSON.stringify(data, null, 2);
+                codeEditor.textContent = content;
+                highlightJSON();
+            }
+
+            function highlightJSON() {
+                let content = codeEditor.textContent;
+                content = content.replace(/"(\w+)":/g, '<span class="json-key">"$1":</span>');
+                content = content.replace(/"([^"]+)"(?=([^"]*"[^"]*")*[^"]*$)/g, '<span class="json-string">"$1"</span>');
+                content = content.replace(/\b(\d+)\b/g, '<span class="json-number">$1</span>');
+                content = content.replace(/\b(true|false)\b/g, '<span class="json-boolean">$1</span>');
+                content = content.replace(/\bnull\b/g, '<span class="json-null">null</span>');
+                codeEditor.innerHTML = content;
+            }
+
+            copyBtn.addEventListener('click', function() {
+                const tempTextArea = document.createElement('textarea');
+                tempTextArea.value = codeEditor.textContent;
+                document.body.appendChild(tempTextArea);
+                tempTextArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(tempTextArea);
+                alert('Content copied to clipboard!');
+            });
+
+            emailBtn.addEventListener('click', function() {
+                emailModal.style.display = 'block';
+            });
+
+            closeModalBtn.addEventListener('click', function() {
+                emailModal.style.display = 'none';
+            });
+
+            sendEmailBtn.addEventListener('click', function() {
+                const email = document.getElementById('emailInput').value;
+                const content = codeEditor.textContent;
+
+                // Here you would typically send this to your server to handle email sending
+                console.log(`Sending email to ${email} with content: ${content}`);
+                alert('Email sent successfully!');
+                emailModal.style.display = 'none';
+            });
+
+            formatToggle.addEventListener('change', function() {
+                if (this.checked) {
+                    // Convert JSON to plain text
+                    try {
+                        const jsonData = JSON.parse(codeEditor.textContent);
+                        codeEditor.textContent = Object.entries(jsonData).map(([key, value]) => `${key}: ${value}`).join('\n');
+                    } catch (error) {
+                        console.error('Error parsing JSON:', error);
+                    }
+                } else {
+                    // Convert plain text back to JSON
+                    try {
+                        const textData = codeEditor.textContent.split('\n').reduce((acc, line) => {
+                            const [key, value] = line.split(':');
+                            acc[key.trim()] = value.trim();
+                            return acc;
+                        }, {});
+                        displayResult(textData);
+                    } catch (error) {
+                        console.error('Error converting to JSON:', error);
+                    }
+                }
+            });
+        });
+    </script>
 </body>
 </html>
