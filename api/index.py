@@ -31,7 +31,7 @@ collection = db['client']
 OCR_API_URL = "https://real-incredibly-snapper.ngrok-free.app/api/extract_text"
 
 # Hugging Face API setup
-HF_API_KEY = os.environ.get('HF_API_KEY')
+HF_API_KEY = os.environ.get('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')
 HF_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
 inference_client = InferenceClient(api_key=HF_API_KEY)
 
