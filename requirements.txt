@@ -2,6 +2,7 @@ Flask[async]
 pymongo
 Pillow
 requests
-huggingface_hubaiohttp
+huggingface_hub
+aiohttp
 python-dotenv
 gunicorn
