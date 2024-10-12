@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.DEBUG)
 # Load environment variables
 load_dotenv()
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder="../templates")
 
 # MongoDB setup
 mongo_client = MongoClient(os.environ.get('MONGODB_URI'))
