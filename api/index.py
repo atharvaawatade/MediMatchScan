@@ -95,11 +95,13 @@ Guidelines:
 2. Remove any references to ICD codes or irrelevant information.
 3. Replace commonly misspelled words with their correct forms (e.g., "CASTROLS" to "CATARACT", "EYR" to "EYE", "NIVER" to "LIVER").
 4. Ensure anatomical directions are spelled correctly (e.g., "RIGHT", "LEFT").
-5. Expand abbreviations if they are clear (e.g., "RE" to "RIGHT EYE").
+5. Do not expand abbreviations or acronyms.
 6. Maintain the original structure and intent of the diagnosis.
 7. If the diagnosis is already correct, return it unchanged.
 8. Provide only the corrected diagnosis without any additional text or explanations.
-9. Do not give any additional suggetions or content just diagnosis.
+9. Remove any anatomical specifications (e.g., "of lens of left eye") unless they are part of the original abbreviation or acronym.
+10. Do not add full forms or any extra information to abbreviations or acronyms (e.g., keep "CF" as is, don't expand it).
+11. Provide only the corrected diagnosis without any file names or additional content.
 
 Corrected diagnosis:"""
 
