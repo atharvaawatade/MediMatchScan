@@ -5,14 +5,13 @@ import time
 import uuid
 import logging
 import re
-import asyncio
 from io import BytesIO
 from PIL import Image
 from flask import Flask, request, jsonify, render_template
 from pymongo import MongoClient
 from dotenv import load_dotenv
 import requests
-from huggingface_hub import InferenceClient
+from openai import OpenAI
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -20,7 +19,7 @@ logging.basicConfig(level=logging.DEBUG)
 # Load environment variables
 load_dotenv()
 
-app = Flask(__name__, template_folder="../templates")
+app = Flask(__name__)
 
 # MongoDB setup
 mongo_client = MongoClient(os.environ.get('MONGODB_URI'))
@@ -30,17 +29,16 @@ collection = db['client']
 # API endpoints
 OCR_API_URL = "https://real-incredibly-snapper.ngrok-free.app/api/extract_text"
 
-# Hugging Face API setup
-HF_API_KEY = os.environ.get('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')
-HF_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
-inference_client = InferenceClient(api_key=HF_API_KEY)
+# OpenAI API setup
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 def encode_image(img):
     buffered = BytesIO()
     img.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-def save_to_csv(filename, extracted_output, corrected_output):
+def save_to_csv(filename, extracted_output, corrected_output, icd_code):
     try:
         csv_file = os.path.join(os.getcwd(), 'output.csv')
         file_exists = os.path.isfile(csv_file)
@@ -48,10 +46,10 @@ def save_to_csv(filename, extracted_output, corrected_output):
         with open(csv_file, 'a', newline='', encoding='utf-8') as file:
             writer = csv.writer(file)
             if not file_exists:
-                writer.writerow(['file_name', 'extracted_output', 'corrected_output'])
+                writer.writerow(['file_name', 'extracted_output', 'corrected_output', 'icd_code'])
 
-            writer.writerow([filename, extracted_output, corrected_output])
-            logging.info(f"Data successfully saved to {csv_file}: {filename}, {extracted_output}, {corrected_output}")
+            writer.writerow([filename, extracted_output, corrected_output, icd_code])
+            logging.info(f"Data successfully saved to {csv_file}: {filename}, {extracted_output}, {corrected_output}, {icd_code}")
 
     except Exception as e:
         logging.error(f"Error saving to CSV: {str(e)}")
@@ -59,75 +57,112 @@ def save_to_csv(filename, extracted_output, corrected_output):
 def extract_provisional_diagnosis(text):
     diag_match = re.search(r'Provisional diagnosis:\s*(.*?)(?:\.|$)', text, re.IGNORECASE | re.DOTALL)
     if diag_match:
-        return diag_match.group(1).strip()
+        diagnosis = diag_match.group(1).strip()
+        logging.debug(f"Diagnosis extracted using regex: {diagnosis}")
+        return diagnosis, True
     
+    logging.debug("Regex extraction failed, sending full text to GPT for diagnosis extraction.")
     prompt = f"""Extract the provisional diagnosis from the following text. If there's no clear diagnosis, respond with 'No clear diagnosis found'. Only provide the extracted diagnosis without any additional explanation.
 
 Text: {text}
 
 Extracted diagnosis:"""
 
-    messages = [{"role": "user", "content": prompt}]
-    
     try:
-        response = ""
-        for message in inference_client.chat_completion(
-            model=HF_MODEL,
-            messages=messages,
-            max_tokens=50,
-            stream=True,
-        ):
-            response += message.choices[0].delta.content or ""
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a medical expert tasked with extracting diagnoses from medical texts."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=50
+        )
         
-        extracted_diagnosis = ' '.join(response.strip().split())
-        return extracted_diagnosis if extracted_diagnosis else "No clear diagnosis found"
+        extracted_diagnosis = response.choices[0].message.content.strip()
+        logging.debug(f"GPT response: {extracted_diagnosis}")
+        
+        if extracted_diagnosis.lower() == "no clear diagnosis found":
+            logging.debug("No diagnosis found via GPT.")
+            return text, False
+        else:
+            return extracted_diagnosis, True
     except Exception as e:
-        logging.error(f"Error in LLaMA extraction: {str(e)}")
-        return "No clear diagnosis found"
+        logging.error(f"Error in GPT extraction: {str(e)}")
+        return text, False
 
-def enhance_diagnosis(extracted_diagnosis):
+def get_icd_code(diagnosis):
+    prompt = f"""As a medical coding expert, provide the most appropriate ICD-10 code for the following diagnosis:
+
+"{diagnosis}"
+
+Guidelines:
+1. If an exact ICD-10 code exists for the diagnosis, provide it.
+2. If no exact code exists, provide the most relevant code.
+3. Include only the ICD-10 code without any additional explanation.
+4. If multiple codes are applicable, provide the most specific one.
+5. If no appropriate code can be determined, respond with "No specific ICD code found".
+
+ICD-10 code:"""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a medical coding expert specialized in ICD-10 codes."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=20
+        )
+        
+        icd_code = response.choices[0].message.content.strip()
+        logging.info(f"ICD code retrieved for '{diagnosis}': {icd_code}")
+        return icd_code
+    except Exception as e:
+        logging.error(f"Error in get_icd_code: {str(e)}")
+        return "Error: Unable to retrieve ICD code"
+
+def enhance_diagnosis(extracted_output):
     prompt = f"""As a medical spell-checker and corrector, improve this diagnosis:
 
-"{extracted_diagnosis}"
+"{extracted_output}"
 
 Guidelines:
 1. Correct all spelling errors, including medical terms.
 2. Remove any references to ICD codes or irrelevant information.
-3. Replace commonly misspelled words with their correct forms (e.g., "CASTROLS" to "CATARACT", "EYR" to "EYE", "NIVER" to "LIVER").
+3. Replace commonly misspelled words with their correct forms (e.g., "CASTROLS" to "CATARACT", "BROLON" to "Brown" "EYR" to "EYE", "NIVER" to "LIVER").
 4. Ensure anatomical directions are spelled correctly (e.g., "RIGHT", "LEFT").
-5. Do not expand abbreviations or acronyms.
+5. Expand abbreviations if they are clear (e.g., "RE" to "RIGHT EYE").
 6. Maintain the original structure and intent of the diagnosis.
-7. If the diagnosis is already correct, return it unchanged.
+7. If the diagnosis is already correct, return it unchanged, if it's written in some code then reply directly with those words, do not add the full form or anything extra (e.g., CF, CKD, etc.).
 8. Provide only the corrected diagnosis without any additional text or explanations.
-9. Remove any anatomical specifications (e.g., "of lens of left eye") unless they are part of the original abbreviation or acronym.
-10. Do not add full forms or any extra information to abbreviations or acronyms (e.g., keep "CF" as is, don't expand it).
-11. Provide only the corrected diagnosis without any file names or additional content.
+9. Do not give any additional suggestions or content, just the diagnosis.
 
 Corrected diagnosis:"""
 
-    messages = [{"role": "user", "content": prompt}]
-    
     try:
-        response = ""
-        for message in inference_client.chat_completion(
-            model=HF_MODEL,
-            messages=messages,
-            max_tokens=50,
-            stream=True,
-        ):
-            response += message.choices[0].delta.content or ""
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a medical expert tasked with correcting and improving medical diagnoses."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=100
+        )
         
-        enhanced_diagnosis = ' '.join(response.strip().split())
+        enhanced_output = response.choices[0].message.content.strip()
         
-        if enhanced_diagnosis.lower() != extracted_diagnosis.lower():
-            logging.info(f"Diagnosis changed from '{extracted_diagnosis}' to '{enhanced_diagnosis}'")
+        if enhanced_output.lower() != extracted_output.lower():
+            logging.info(f"Output changed from '{extracted_output}' to '{enhanced_output}'")
         else:
-            logging.info(f"Diagnosis unchanged: '{extracted_diagnosis}'")
+            logging.info(f"Output unchanged: '{extracted_output}'")
         
-        return enhanced_diagnosis
+        # Get ICD code for the enhanced diagnosis
+        icd_code = get_icd_code(enhanced_output)
+        
+        return enhanced_output, icd_code
     except Exception as e:
         logging.error(f"Error in enhance_diagnosis: {str(e)}")
-        return "Error: Unable to enhance diagnosis"
+        return "Error: Unable to enhance diagnosis", "Error: Unable to retrieve ICD code"
 
 def process_image(img, mrn_number, filename, save_data):
     try:
@@ -144,28 +179,39 @@ def process_image(img, mrn_number, filename, save_data):
 
         api_result = response.json()
         extracted_text = api_result.get('extracted_text', '')
-        extracted_diagnosis = extract_provisional_diagnosis(extracted_text)
-        corrected_diagnosis = enhance_diagnosis(extracted_diagnosis)
-
-        save_to_csv(filename, extracted_diagnosis, corrected_diagnosis)
+        logging.debug(f"Extracted text from OCR: {extracted_text}")
+        
+        extracted_diagnosis, found = extract_provisional_diagnosis(extracted_text)
+        
+        if found:
+            corrected_diagnosis, icd_code = enhance_diagnosis(extracted_diagnosis)
+            logging.debug("Diagnosis was found, enhanced, and ICD code retrieved.")
+        else:
+            logging.debug("No diagnosis found; sending full text to GPT for enhancement and ICD code retrieval.")
+            corrected_diagnosis, icd_code = enhance_diagnosis(extracted_text)
+            extracted_diagnosis = extracted_text
+        
+        # Save to CSV
+        save_to_csv(filename, extracted_diagnosis, corrected_diagnosis, icd_code)
 
         if save_data and mrn_number:
             unique_id = str(uuid.uuid4())
             document = {
                 'mrn_number': mrn_number,
-                'extracted_diagnosis': extracted_diagnosis,
-                'corrected_diagnosis': corrected_diagnosis,
+                'extracted_provisional_diagnosis': extracted_diagnosis,
+                'corrected_provisional_diagnosis': corrected_diagnosis,
+                'icd_code': icd_code,
                 'unique_id': unique_id,
-                'got_mode': "API OCR + LLaMA",
+                'got_mode': "API OCR + GPT",
                 'timestamp': time.time()
             }
             result = collection.insert_one(document)
             logging.info(f"Document inserted with ID: {result.inserted_id}")
 
-        return extracted_diagnosis, corrected_diagnosis
+        return extracted_text, extracted_diagnosis, corrected_diagnosis, icd_code
     except Exception as e:
         logging.error(f"Error in process_image: {str(e)}")
-        return "", ""
+        return "", "", "", ""
 
 @app.route('/')
 def index():
@@ -182,11 +228,13 @@ def scan():
         logging.info(f"Received scan request. MRN: {mrn_number}, Save Data: {save_data}")
 
         img = Image.open(image)
-        extracted_diagnosis, corrected_diagnosis = process_image(img, mrn_number, filename, save_data)
+        extracted_text, extracted_diagnosis, corrected_diagnosis, icd_code = process_image(img, mrn_number, filename, save_data)
         
         response = {
+            'extracted_ocr_text': extracted_text,
             'extracted_provisional_diagnosis': extracted_diagnosis,
-            'corrected_provisional_diagnosis': corrected_diagnosis
+            'corrected_provisional_diagnosis': corrected_diagnosis,
+            'icd_code': icd_code
         }
         
         logging.info(f"Scan response: {response}")
@@ -194,10 +242,10 @@ def scan():
     except Exception as e:
         logging.error(f"Error in scan route: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
+    
 @app.route('/health', methods=['GET'])
-def health_check():
-    return jsonify({'status': 'healthy', 'message': 'Server is running fine'})
+def health():
+    return jsonify({'status': 'up'})
 
 @app.route('/api/test', methods=['POST'])
 def test_api():
@@ -214,11 +262,13 @@ def test_api():
             img_bytes = image_file.read()
             img = Image.open(BytesIO(img_bytes))
             
-            extracted_diagnosis, corrected_diagnosis = process_image(img, None, image_file.filename, False)
+            extracted_text, extracted_diagnosis, corrected_diagnosis, icd_code = process_image(img, None, image_file.filename, False)
             
             response = {
+                'extracted_ocr_text': extracted_text,
                 'extracted_provisional_diagnosis': extracted_diagnosis,
-                'corrected_provisional_diagnosis': corrected_diagnosis
+                'corrected_provisional_diagnosis': corrected_diagnosis,
+                'icd_code': icd_code
             }
             
             return jsonify(response)
