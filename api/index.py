@@ -32,22 +32,6 @@ OCR_API_URL = "https://real-incredibly-snapper.ngrok-free.app/api/extract_text"
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-def normalize_text(text):
-    # Remove extra whitespace and newlines
-    text = re.sub(r'\s+', ' ', text).strip()
-    # Convert to lowercase
-    text = text.lower()
-    # Remove any special characters except alphanumeric and spaces
-    text = re.sub(r'[^a-z0-9\s]', '', text)
-    return text
-
-def extract_provisional_diagnosis_from_text(text):
-    normalized_text = normalize_text(text)
-    
-    prompt = f"""Extract the provisional diagnosis from the following normalized text. If there's no clear diagnosis, respond with 'No clear diagnosis found'. Only provide the extracted diagnosis without any additional explanation.
-
-Text: {normalized_text}
-
 def encode_image(img):
     buffered = BytesIO()
     img.save(buffered, format="PNG")
@@ -290,89 +274,6 @@ def test_api():
         except Exception as e:
             logging.error(f"Error processing image: {str(e)}")
             return jsonify({'error': 'Error processing image'}), 500
-
-def extract_provisional_diagnosis_from_text(text):
-    normalized_text = normalize_text(text)
-    
-    prompt = f"""Extract the provisional diagnosis from the following normalized text. If there's no clear diagnosis, respond with 'No clear diagnosis found'. Only provide the extracted diagnosis without any additional explanation.
-
-Text: {normalized_text}
-
-Extracted diagnosis:"""
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a medical expert tasked with extracting diagnoses from medical texts."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=50
-        )
-        
-        extracted_diagnosis = response.choices[0].message.content.strip()
-        logging.debug(f"GPT response for text input: {extracted_diagnosis}")
-        
-        if extracted_diagnosis.lower() == "no clear diagnosis found":
-            logging.debug("No diagnosis found via GPT for text input.")
-            return normalized_text, False
-        else:
-            return extracted_diagnosis, True
-    except Exception as e:
-        logging.error(f"Error in GPT extraction for text input: {str(e)}")
-        return normalized_text, False
-
-@app.route('/api/process_text', methods=['POST'])
-def process_text():
-    try:
-        data = request.json
-        if 'text' not in data:
-            return jsonify({'error': 'No text provided'}), 400
-        
-        input_text = data['text']
-        mrn_number = data.get('mrn_number', '')
-        save_data = data.get('save_data', False)
-        
-        logging.info(f"Received text processing request. MRN: {mrn_number}, Save Data: {save_data}")
-        
-        extracted_diagnosis, found = extract_provisional_diagnosis_from_text(input_text)
-        
-        if found:
-            corrected_diagnosis, icd_code = enhance_diagnosis(extracted_diagnosis)
-            logging.debug("Diagnosis was found, enhanced, and ICD code retrieved from text input.")
-        else:
-            logging.debug("No diagnosis found; using full text for enhancement and ICD code retrieval.")
-            corrected_diagnosis, icd_code = enhance_diagnosis(input_text)
-            extracted_diagnosis = input_text
-        
-        # Save to CSV
-        save_to_csv("text_input", extracted_diagnosis, corrected_diagnosis, icd_code)
-        
-        if save_data and mrn_number:
-            unique_id = str(uuid.uuid4())
-            document = {
-                'mrn_number': mrn_number,
-                'extracted_provisional_diagnosis': extracted_diagnosis,
-                'corrected_provisional_diagnosis': corrected_diagnosis,
-                'icd_code': icd_code,
-                'unique_id': unique_id,
-                'got_mode': "Text Input + GPT",
-                'timestamp': time.time()
-            }
-            result = collection.insert_one(document)
-            logging.info(f"Document inserted with ID: {result.inserted_id}")
-        
-        response = {
-            'extracted_provisional_diagnosis': extracted_diagnosis,
-            'corrected_provisional_diagnosis': corrected_diagnosis,
-            'icd_code': icd_code
-        }
-        
-        logging.info(f"Text processing response: {response}")
-        return jsonify(response)
-    except Exception as e:
-        logging.error(f"Error in process_text route: {str(e)}")
-        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
